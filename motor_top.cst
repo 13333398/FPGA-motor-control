@@ -1,0 +1,64 @@
+// =============================================================
+//  motor_top.cst  --  Tang Nano 20K 管脚约束
+//  器件 GW2AR-LV18QN88C8/I7（Device Version C）
+// =============================================================
+
+// ---- 27 MHz 板载晶振 ----
+IO_LOC  "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ---- 板载按键 S2(87) / S1(88)，高电平有效（实测，与官方 hdmi 例程一致）----
+IO_LOC  "btn_sel" 87;
+IO_PORT "btn_sel" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+IO_LOC  "btn_rst" 88;
+IO_PORT "btn_rst" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// ---- 编码器 A/B（排针 25/26）----
+IO_LOC  "enc_a" 25;
+IO_PORT "enc_a" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "enc_b" 26;
+IO_PORT "enc_b" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ---- TB6612 驱动（排针 27/28/29）----
+IO_LOC  "pwm"  27;
+IO_PORT "pwm"  IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "ain1" 28;
+IO_PORT "ain1" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC  "ain2" 29;
+IO_PORT "ain2" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// ---- 板载 USB 串口 TX（BL616）----
+IO_LOC  "uart_tx" 69;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// ---- 板载 USB 串口 RX（BL616）----
+IO_LOC  "uart_rx" 70;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// ---- 蜂鸣器（排针 48）----
+IO_LOC  "buz" 48;
+IO_PORT "buz" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// ---- HDMI TMDS 差分对（与官方 hdmi 例程一致）----
+IO_LOC  "tmds_clk_p" 33,34;
+IO_PORT "tmds_clk_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=3.5 BANK_VCCIO=3.3;
+IO_LOC  "tmds_data_p[0]" 35,36;
+IO_PORT "tmds_data_p[0]" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=3.5 BANK_VCCIO=3.3;
+IO_LOC  "tmds_data_p[1]" 37,38;
+IO_PORT "tmds_data_p[1]" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=3.5 BANK_VCCIO=3.3;
+IO_LOC  "tmds_data_p[2]" 39,40;
+IO_PORT "tmds_data_p[2]" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=3.5 BANK_VCCIO=3.3;
+
+// ---- 板载 6 个 LED ----
+IO_LOC  "led[0]" 15;
+IO_LOC  "led[1]" 16;
+IO_LOC  "led[2]" 17;
+IO_LOC  "led[3]" 18;
+IO_LOC  "led[4]" 19;
+IO_LOC  "led[5]" 20;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;

@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Tang Nano 20K · 电机闭环监控</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --line:#2a3450;
+    --text:#e8eefc; --dim:#8f9bb8; --accent:#4da3ff;
+    --ok:#38d39f; --warn:#ffb340; --bad:#ff5c5c;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:18px 22px 28px;
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  h1{font-size:19px; font-weight:600; margin:0 0 14px; letter-spacing:.5px;}
+  h1 span{color:var(--dim); font-weight:400; font-size:13px; margin-left:10px;}
+  .toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px;}
+  .control{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px;}
+  .ctitle{color:var(--dim); font-size:13px;}
+  #inpSpeed{
+    width:96px; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+    background:#0e1524; color:var(--text); font-size:15px; font-variant-numeric:tabular-nums;
+  }
+  button{
+    background:#233152; color:var(--text); border:1px solid var(--line);
+    padding:9px 16px; border-radius:8px; font-size:14px; cursor:pointer;
+    transition:.15s;
+  }
+  button:hover:not(:disabled){background:#2c3d66; border-color:var(--accent);}
+  button:disabled{opacity:.4; cursor:not-allowed;}
+  button.primary{background:#1d6fd6; border-color:#1d6fd6;}
+  button.primary:hover{background:#2480f0;}
+  #status{color:var(--dim); font-size:13px; margin-left:6px;}
+  #status.on{color:var(--ok);}
+  #status.err{color:var(--bad);}
+
+  .cards{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:16px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
+  .card .label{color:var(--dim); font-size:12px; margin-bottom:6px;}
+  .card .val{font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.1;}
+  .card .unit{color:var(--dim); font-size:12px; margin-top:2px;}
+  .card .val.bad{color:var(--bad);}
+  .card .val.ok{color:var(--ok);}
+
+  .chartbox{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px;}
+  canvas{width:100%; height:420px; display:block;}
+  .legend{display:flex; gap:22px; font-size:12px; color:var(--dim); margin:8px 4px 2px;}
+  .legend i{display:inline-block; width:22px; height:3px; vertical-align:middle; margin-right:6px; border-radius:2px;}
+  .foot{color:var(--dim); font-size:12px; margin-top:12px; line-height:1.7;}
+  @media (max-width:1100px){ .cards{grid-template-columns:repeat(3,1fr);} }
+</style>
+</head>
+<body>
+
+<h1>Tang Nano 20K · 直流电机 PI 闭环监控
+  <span>Web Serial · 115200 8N1</span></h1>
+
+<div class="toolbar">
+  <button id="btnConnect" class="primary">连接串口</button>
+  <button id="btnDemo">演示数据</button>
+  <button id="btnCsv" disabled>导出 CSV</button>
+  <button id="btnClear">清空</button>
+  <span id="status">未连接</span>
+</div>
+
+<div class="toolbar control">
+  <span class="ctitle">控制</span>
+  <input id="inpSpeed" type="number" min="0" max="600" value="120" step="10">
+  <span class="ctitle">RPM</span>
+  <button id="btnSet">设置转速</button>
+  <button id="btnStop">停止</button>
+  <button id="btnRev">反转</button>
+  <button id="btnClr">清除报警</button>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">目标转速 T</div>
+    <div class="val" id="vT">--</div><div class="unit">RPM</div></div>
+  <div class="card"><div class="label">实测转速 S</div>
+    <div class="val" id="vS">--</div><div class="unit">RPM</div></div>
+  <div class="card"><div class="label">误差 E</div>
+    <div class="val" id="vE">--</div><div class="unit">RPM</div></div>
+  <div class="card"><div class="label">占空比 D</div>
+    <div class="val" id="vD">--</div><div class="unit">%</div></div>
+  <div class="card"><div class="label">帧率</div>
+    <div class="val" id="vF">--</div><div class="unit">帧/秒</div></div>
+  <div class="card"><div class="label">丢帧</div>
+    <div class="val" id="vL">0</div><div class="unit">按 N 序号统计</div></div>
+</div>
+
+<div class="chartbox">
+  <canvas id="chart"></canvas>
+  <div class="legend">
+    <span><i style="background:#ffb340"></i>目标 T</span>
+    <span><i style="background:#4da3ff"></i>实测 S</span>
+  </div>
+</div>
+
+<div class="foot">
+  · 需要 Edge / Chrome 桌面版（Web Serial API），Firefox / Safari / 手机浏览器不支持<br>
+  · 打开前请关闭其他占用该 COM 口的软件（PowerShell 监视器、SSCOM 等）<br>
+  · 曲线保存最近 600 点（约 5 分钟），点"导出 CSV"可保存完整记录
+</div>
+
+<script>
+"use strict";
+
+const MAX_POINTS = 600;
+const state = {
+  port: null, reader: null, writer: null, keepReading: false,
+  samples: [],            // {t, s, tgt, d, n}
+  lastN: null, lost: 0,
+  frameTimes: [],         // 用于计算帧率
+  demo: false, demoTimer: null, demoPhase: 0, demoValue: 0
+};
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status");
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || "";
+}
+
+/* ---------------- 解析一帧 ---------------- */
+function parseLine(line) {
+  const m = line.match(/S([0-9A-Fa-f]{1,4})\s+T([0-9A-Fa-f]{1,4})\s+D([0-9A-Fa-f]{1,3})\s+N([0-9A-Fa-f]{1,4})/);
+  if (!m) return null;
+  return {
+    s: parseInt(m[1], 16),
+    tgt: parseInt(m[2], 16),
+    d: parseInt(m[3], 16),
+    n: parseInt(m[4], 16)
+  };
+}
+
+/* ---------------- 更新界面 ---------------- */
+function onFrame(f) {
+  const now = performance.now() / 1000;
+
+  // 丢帧统计（N 是 16 位，回绕）
+  if (state.lastN !== null) {
+    const expect = (state.lastN + 1) & 0xFFFF;
+    if (f.n !== expect) {
+      state.lost += (f.n - expect) & 0xFFFF;
+      $("vL").textContent = state.lost;
+    }
+  }
+  state.lastN = f.n;
+
+  // 帧率
+  state.frameTimes.push(now);
+  while (state.frameTimes.length && now - state.frameTimes[0] > 1) {
+    state.frameTimes.shift();
+  }
+  $("vF").textContent = state.frameTimes.length.toFixed(0);
+
+  // 数值卡片
+  const err = f.tgt - f.s;
+  $("vT").textContent = f.tgt;
+  $("vS").textContent = f.s;
+  $("vE").textContent = (err > 0 ? "+" : "") + err;
+  $("vE").className = "val " + (Math.abs(err) <= 2 ? "ok" : (Math.abs(err) > 10 ? "bad" : ""));
+  $("vD").textContent = (f.d / 1023 * 100).toFixed(1);
+
+  // 历史
+  state.samples.push({ t: now, s: f.s, tgt: f.tgt, d: f.d, n: f.n });
+  if (state.samples.length > MAX_POINTS) state.samples.shift();
+  $("btnCsv").disabled = false;
+
+  draw();
+}
+
+/* ---------------- 绘图 ---------------- */
+const canvas = $("chart");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", () => { resize(); draw(); });
+
+function draw() {
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 54, padR = 14, padT = 12, padB = 28;
+  const w = W - padL - padR, h = H - padT - padB;
+
+  // 背景
+  ctx.fillStyle = "#121a29";
+  ctx.fillRect(padL, padT, w, h);
+
+  if (state.samples.length < 2) {
+    ctx.fillStyle = "#5f6b88";
+    ctx.font = "14px Segoe UI";
+    ctx.textAlign = "center";
+    ctx.fillText("等待数据… 点“连接串口”或“演示数据”", padL + w / 2, padT + h / 2);
+    return;
+  }
+
+  const data = state.samples;
+  let maxV = 60;
+  for (const p of data) maxV = Math.max(maxV, p.s, p.tgt);
+  maxV = Math.ceil(maxV * 1.18 / 30) * 30;
+
+  const t0 = data[0].t, t1 = data[data.length - 1].t;
+  const span = Math.max(0.5, t1 - t0);
+  const x = tt => padL + (tt - t0) / span * w;
+  const y = vv => padT + h - (vv / maxV) * h;
+
+  // 网格 + y 轴
+  ctx.strokeStyle = "#232d44";
+  ctx.fillStyle = "#7d89a6";
+  ctx.font = "12px Consolas, monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  const step = maxV <= 120 ? 20 : (maxV <= 300 ? 50 : 100);
+  for (let v = 0; v <= maxV; v += step) {
+    const yy = y(v);
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + w, yy); ctx.stroke();
+    ctx.fillText(v, padL - 8, yy);
+  }
+
+  // 目标线（虚线）
+  ctx.save();
+  ctx.setLineDash([6, 5]);
+  ctx.strokeStyle = "#ffb340";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  data.forEach((p, i) => i ? ctx.lineTo(x(p.t), y(p.tgt)) : ctx.moveTo(x(p.t), y(p.tgt)));
+  ctx.stroke();
+  ctx.restore();
+
+  // 实测线（实线）
+  ctx.strokeStyle = "#4da3ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  data.forEach((p, i) => i ? ctx.lineTo(x(p.t), y(p.s)) : ctx.moveTo(x(p.t), y(p.s)));
+  ctx.stroke();
+
+  // 最新点
+  const last = data[data.length - 1];
+  ctx.fillStyle = "#4da3ff";
+  ctx.beginPath();
+  ctx.arc(x(last.t), y(last.s), 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // x 轴时间
+  ctx.fillStyle = "#7d89a6";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText("-" + span.toFixed(0) + " s", padL, padT + h + 8);
+  ctx.fillText("现在", padL + w, padT + h + 8);
+}
+
+/* ---------------- Web Serial ---------------- */
+async function connectSerial() {
+  if (!("serial" in navigator)) {
+    setStatus("此浏览器不支持 Web Serial，请用 Edge 或 Chrome 桌面版", "err");
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none" });
+    state.port = port;
+    state.keepReading = true;
+    setStatus("已连接", "on");
+    $("btnConnect").textContent = "断开串口";
+    readLoop(port);
+  } catch (e) {
+    setStatus("连接失败：" + e.message, "err");
+  }
+}
+
+async function readLoop(port) {
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (port.readable && state.keepReading) {
+      state.reader = port.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await state.reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            const f = parseLine(line);
+            if (f) onFrame(f);
+          }
+          if (buf.length > 512) buf = "";
+        }
+      } finally {
+        state.reader.releaseLock();
+      }
+    }
+  } catch (e) {
+    setStatus("读取中断：" + e.message, "err");
+  }
+}
+
+/* ---------------- 发送命令 ---------------- */
+async function sendCmd(cmd) {
+  if (!state.port || !state.port.writable) {
+    setStatus("请先连接串口", "err");
+    return;
+  }
+  try {
+    if (!state.writer) state.writer = state.port.writable.getWriter();
+    await state.writer.write(new TextEncoder().encode(cmd));
+    setStatus("已发送：" + cmd.trim(), "on");
+  } catch (e) {
+    setStatus("发送失败：" + e.message, "err");
+  }
+}
+
+async function disconnectSerial() {
+  state.keepReading = false;
+  try { if (state.reader) await state.reader.cancel(); } catch (e) {}
+  try { if (state.writer) { state.writer.releaseLock(); state.writer = null; } } catch (e) {}
+  try { if (state.port) await state.port.close(); } catch (e) {}
+  state.port = null;
+  setStatus("未连接");
+  $("btnConnect").textContent = "连接串口";
+}
+
+/* ---------------- 演示数据（无硬件时测试界面） ---------------- */
+function toggleDemo() {
+  if (state.demo) {
+    clearInterval(state.demoTimer);
+    state.demo = false;
+    $("btnDemo").textContent = "演示数据";
+    setStatus("演示已停止");
+    return;
+  }
+  state.demo = true;
+  state.demoPhase = 40;      // 从 60 RPM 开始，避免一开始长时间平线
+  state.demoValue = 0;
+  state.demoN = 0;
+  $("btnDemo").textContent = "停止演示";
+  setStatus("演示模式（合成数据）", "on");
+
+  state.demoTimer = setInterval(() => {
+    state.demoPhase++;
+    const seq = [60, 120, 180, 240, 0];
+    const target = seq[Math.floor(state.demoPhase / 10) % seq.length];
+    // 一阶跟随 + 小噪声
+    state.demoValue += (target - state.demoValue) * 0.18;
+    const noise = (Math.random() - 0.5) * 2;
+    const actual = Math.max(0, Math.round(state.demoValue + noise));
+    const duty = Math.min(1023, Math.round((actual / 300) * 1023 + 20));
+    state.demoN = (state.demoN + 1) & 0xFFFF;
+    onFrame({ s: actual, tgt: target, d: duty, n: state.demoN });
+  }, 500);
+}
+
+/* ---------------- CSV ---------------- */
+function exportCsv() {
+  const rows = ["time_s,target_rpm,actual_rpm,duty,frames"];
+  const t0 = state.samples.length ? state.samples[0].t : 0;
+  for (const p of state.samples) {
+    rows.push([(p.t - t0).toFixed(2), p.tgt, p.s, p.d, p.n].join(","));
+  }
+  const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "motor_log_" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
+  a.click();
+}
+
+/* ---------------- 事件 ---------------- */
+$("btnConnect").addEventListener("click", () => {
+  if (state.port) disconnectSerial(); else connectSerial();
+});
+$("btnDemo").addEventListener("click", toggleDemo);
+$("btnCsv").addEventListener("click", exportCsv);
+$("btnSet").addEventListener("click", () => {
+  let v = parseInt($("inpSpeed").value, 10);
+  if (isNaN(v)) v = 0;
+  v = Math.max(0, Math.min(600, v));
+  $("inpSpeed").value = v;
+  sendCmd("T" + v + "\n");
+});
+$("btnStop").addEventListener("click", () => sendCmd("T0\n"));
+$("btnRev").addEventListener("click", () => sendCmd("R\n"));
+$("btnClr").addEventListener("click", () => sendCmd("C\n"));
+$("btnClear").addEventListener("click", () => {
+  state.samples = []; state.lastN = null; state.lost = 0; state.frameTimes = [];
+  $("vL").textContent = "0"; $("vF").textContent = "--";
+  $("vT").textContent = $("vS").textContent = $("vE").textContent = "--";
+  $("vD").textContent = "--"; $("btnCsv").disabled = true;
+  draw();
+});
+
+resize();
+draw();
+</script>
+</body>
+</html>
